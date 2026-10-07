@@ -1,0 +1,57 @@
+name: governance-knowledge
+x-app: &app
+  build: .
+  environment: &environment
+    DATABASE_URL: postgresql://governance:governance@postgres:5432/governance
+    EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-mock}
+    EMBEDDING_REVISION: ${EMBEDDING_REVISION:-v1}
+    LANCEDB_URI: /data/lancedb
+    QWEN_BASE_URL: ${QWEN_BASE_URL:-http://host.docker.internal:8080/v1}
+    QWEN_MODEL: ${QWEN_MODEL:-Qwen3-Embedding-4B-GGUF}
+    QWEN_API_KEY: ${QWEN_API_KEY:-}
+  volumes:
+    - lance_data:/data/lancedb
+  extra_hosts:
+    - host.docker.internal:host-gateway
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: governance
+      POSTGRES_PASSWORD: governance
+      POSTGRES_DB: governance
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U governance -d governance"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  setup:
+    <<: *app
+    command: [sh, -c, "pnpm db:migrate && pnpm db:seed"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+  worker:
+    <<: *app
+    command: [pnpm, worker]
+    init: true
+    restart: unless-stopped
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+  app:
+    <<: *app
+    command: [pnpm, start]
+    init: true
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+volumes:
+  postgres_data:
+  lance_data:

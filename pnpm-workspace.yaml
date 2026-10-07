@@ -1,0 +1,28 @@
+allowBuilds:
+  esbuild: true
+  onnxruntime-node: false
+  protobufjs: false
+  sharp: true
+  unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@lancedb/lancedb-darwin-arm64@0.40.0'
+  - '@lancedb/lancedb-linux-arm64-gnu@0.40.0'
+  - '@lancedb/lancedb-linux-arm64-musl@0.40.0'
+  - '@lancedb/lancedb-linux-x64-gnu@0.40.0'
+  - '@lancedb/lancedb-linux-x64-musl@0.40.0'
+  - '@lancedb/lancedb-win32-arm64-msvc@0.40.0'
+  - '@lancedb/lancedb-win32-x64-msvc@0.40.0'
+  - '@lancedb/lancedb@0.40.0'
+  - '@next/env@16.4.0'
+  - '@next/eslint-plugin-next@16.4.0'
+  - '@next/swc-darwin-arm64@16.4.0'
+  - '@next/swc-darwin-x64@16.4.0'
+  - '@next/swc-linux-arm64-gnu@16.4.0'
+  - '@next/swc-linux-arm64-musl@16.4.0'
+  - '@next/swc-linux-x64-gnu@16.4.0'
+  - '@next/swc-linux-x64-musl@16.4.0'
+  - '@next/swc-win32-arm64-msvc@16.4.0'
+  - '@next/swc-win32-x64-msvc@16.4.0'
+  - eslint-config-next@16.4.0
+  - next@16.4.0
+
