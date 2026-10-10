@@ -1,4 +1,4 @@
-import { getPool } from "../src/infrastructure/db/connection";
+import { getPool, type Sql } from "../src/infrastructure/db/connection";
 import { createRuntime } from "../src/infrastructure/runtime";
 import type { GovernanceRepository } from "../src/infrastructure/db/repository";
 import { validateEntity } from "../src/domain/validation";
@@ -138,6 +138,76 @@ export async function seed(repository: GovernanceRepository) {
     },
     action: { onViolation: "WARN", severity: "MEDIUM" },
   });
+  await seedCatalog(repository.db);
+}
+
+// Document types and grades have no CRUD API yet; fixed ids keep the seed idempotent.
+async function seedCatalog(db: Sql) {
+  const documentTypes = [
+    [
+      "40000000-0000-4000-8000-000000000001",
+      "EXTERNAL_SUBMISSION",
+      "외부 제출 문서",
+      "협력사·고객·기관 등 회사 밖으로 제출하거나 공유하는 문서",
+      ["외부 협력사 제출용 고객 명세", "감독기관 제출 자료"],
+      ["사내 회의록", "개발팀 내부 설계 메모"],
+    ],
+    [
+      "40000000-0000-4000-8000-000000000002",
+      "INTERNAL_AUDIT_REPORT",
+      "내부 감사 리포트",
+      "내부 감사 조직이 점검 대상·발견 사항·조치 계획을 기록한 보고서",
+      ["2026년 상반기 개인정보 처리 실태 점검 결과"],
+      ["외부 회계감사인 제출 자료"],
+    ],
+    [
+      "40000000-0000-4000-8000-000000000003",
+      "OPERATION_LOG",
+      "운영 로그",
+      "시스템이 자동으로 남긴 실행·오류·접근 기록",
+      ["애플리케이션 오류 로그", "접근 기록"],
+      ["장애 회고 문서"],
+    ],
+  ] as const;
+  for (const [id, code, name, definition, positive, negative] of documentTypes)
+    await db.query(
+      `INSERT INTO document_types(id,code,name,definition,"positiveExamples","negativeExamples")
+      VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING`,
+      [
+        id,
+        code,
+        name,
+        definition,
+        JSON.stringify(positive),
+        JSON.stringify(negative),
+      ],
+    );
+  const grades = [
+    ["STAFF", "사원"],
+    ["ASSISTANT_MANAGER", "대리"],
+    ["MANAGER", "과장"],
+    ["DEPUTY_GENERAL_MANAGER", "차장"],
+    ["GENERAL_MANAGER", "부장"],
+  ];
+  for (const [index, [code, name]] of grades.entries())
+    await db.query(
+      `INSERT INTO job_grades(id,"gradeSchemeId",code,name,rank) VALUES($1,'KR_STANDARD',$2,$3,$4)
+      ON CONFLICT (id) DO NOTHING`,
+      [
+        `50000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+        code,
+        name,
+        index + 1,
+      ],
+    );
+  // The resident-number masking rule targets documents leaving the company.
+  await db.query(
+    `INSERT INTO rule_document_types("ruleId","documentTypeId") VALUES($1,$2) ON CONFLICT DO NOTHING`,
+    [
+      "30000000-0000-4000-8000-000000000002",
+      "40000000-0000-4000-8000-000000000001",
+    ],
+  );
 }
 if (process.argv[1]?.endsWith("/seed.ts")) {
   try {

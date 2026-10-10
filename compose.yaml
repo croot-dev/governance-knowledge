@@ -1,16 +1,43 @@
 name: governance-knowledge
+# Other values (API keys, providers, limits) come from the project .env via ${...} interpolation.
 x-app: &app
   build: .
   environment: &environment
     DATABASE_URL: postgresql://governance:governance@postgres:5432/governance
-    EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-mock}
+    EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-qwen}
     EMBEDDING_REVISION: ${EMBEDDING_REVISION:-v1}
-    LANCEDB_URI: /data/lancedb
-    QWEN_BASE_URL: ${QWEN_BASE_URL:-http://host.docker.internal:8080/v1}
-    QWEN_MODEL: ${QWEN_MODEL:-Qwen3-Embedding-4B-GGUF}
-    QWEN_API_KEY: ${QWEN_API_KEY:-}
+    STORAGE_LANCEDB_URI: /data/lancedb
+    STORAGE_ARTIFACT_DIR: /data/artifacts
+    NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+    NVIDIA_BASE_URL: ${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+    OCR_NVIDIA_MODEL: ${OCR_NVIDIA_MODEL:-qwen/qwen3.5-122b-a10b}
+    EMBEDDING_NVIDIA_MODEL: ${EMBEDDING_NVIDIA_MODEL:-nvidia/llama-3.2-nv-embedqa-1b-v2}
+    EMBEDDING_NVIDIA_DIMENSIONS: ${EMBEDDING_NVIDIA_DIMENSIONS:-2048}
+    NVIDIA_TIMEOUT_MS: ${NVIDIA_TIMEOUT_MS:-90000}
+    NVIDIA_REQUEST_INTERVAL_MS: ${NVIDIA_REQUEST_INTERVAL_MS:-2000}
+    OCR_MAX_OUTPUT_TOKENS: ${OCR_MAX_OUTPUT_TOKENS:-4096}
+    OCR_OLLAMA_TIMEOUT_MS: ${OCR_OLLAMA_TIMEOUT_MS:-300000}
+    OCR_OLLAMA_CONTEXT_TOKENS: ${OCR_OLLAMA_CONTEXT_TOKENS:-8192}
+    OCR_MAX_IMAGE_SIDE: ${OCR_MAX_IMAGE_SIDE:-1600}
+    OCR_TILE_HEIGHT: ${OCR_TILE_HEIGHT:-800}
+    OCR_TILE_OVERLAP: ${OCR_TILE_OVERLAP:-64}
+    PDF_MAX_PAGES: ${PDF_MAX_PAGES:-100}
+    PDF_RENDER_DPI: ${PDF_RENDER_DPI:-150}
+    OCR_PROVIDER: ${OCR_PROVIDER:-ollama}
+    # OCR uses the host's native Ollama (Metal GPU); Docker Desktop on macOS cannot use the GPU.
+    OCR_OLLAMA_BASE_URL: http://host.docker.internal:11434
+    OCR_OLLAMA_MODEL: ${OCR_OLLAMA_MODEL:-qwen3-vl:2b-instruct-q4_K_M}
+    # Layout description model; defaults to OCR_OLLAMA_MODEL when empty.
+    OCR_OLLAMA_LAYOUT_MODEL: ${OCR_OLLAMA_LAYOUT_MODEL:-}
+    # Embedding also runs on the host Ollama (OpenAI-compatible /v1/embeddings).
+    EMBEDDING_QWEN_BASE_URL: http://host.docker.internal:11434/v1
+    EMBEDDING_QWEN_MODEL: ${EMBEDDING_QWEN_MODEL:-qwen3-embedding:0.6b}
+    EMBEDDING_QWEN_DIMENSIONS: ${EMBEDDING_QWEN_DIMENSIONS:-1024}
+    EMBEDDING_QWEN_API_KEY: ${EMBEDDING_QWEN_API_KEY:-}
   volumes:
     - lance_data:/data/lancedb
+    # Originals and extracted content, shared by the app and the analysis worker.
+    - artifact_data:/data/artifacts
   extra_hosts:
     - host.docker.internal:host-gateway
 services:
@@ -43,6 +70,14 @@ services:
     depends_on:
       setup:
         condition: service_completed_successfully
+  analysis-worker:
+    <<: *app
+    command: [pnpm, analysis-worker, --cleanup]
+    init: true
+    restart: unless-stopped
+    depends_on:
+      setup:
+        condition: service_completed_successfully
   app:
     <<: *app
     command: [pnpm, start]
@@ -55,3 +90,4 @@ services:
 volumes:
   postgres_data:
   lance_data:
+  artifact_data:

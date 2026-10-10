@@ -3,39 +3,20 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PGlite } from "@electric-sql/pglite";
 import { GovernanceRepository } from "../src/infrastructure/db/repository";
-import type { Database, Sql } from "../src/infrastructure/db/connection";
 import { MockEmbeddingProvider } from "../src/infrastructure/embedding/providers";
 import { LanceVectorStore } from "../src/infrastructure/vector-store/lance";
 import { GovernanceService } from "../src/application/governance";
 import { IndexingService } from "../src/application/indexing";
 import { SearchService } from "../src/application/search";
-import { migrate } from "../scripts/migrate";
+import { createTestDatabase } from "./helpers/db";
 import type { EmbeddingProvider } from "../src/domain/ports";
 import { AppError, ruleTypes } from "../src/domain/model";
 import { seed } from "../scripts/seed";
 import { DocumentTransformService } from "../src/application/transform";
 
 async function setup() {
-  const pg = new PGlite();
-  function sql(client: Pick<PGlite, "query" | "exec">): Sql {
-    return {
-      async query<T>(query: string, values?: unknown[]) {
-        if (query.includes("CREATE TYPE lifecycle")) {
-          await client.exec(query);
-          return { rows: [] as T[] };
-        }
-        return client.query<T>(query, values);
-      },
-    };
-  }
-  const db: Database = {
-    ...sql(pg),
-    transaction: (fn) => pg.transaction((tx) => fn(sql(tx))),
-  };
-  await migrate(db);
-  await migrate(db);
+  const { pg, db } = await createTestDatabase();
   const embedding = new MockEmbeddingProvider();
   const repository = new GovernanceRepository(db, embedding.profile);
   await repository.initialize();

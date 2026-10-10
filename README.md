@@ -4,11 +4,29 @@
 
 **Next.js App Router · TypeScript · shadcn/ui · PostgreSQL · LanceDB · pnpm**
 
-인증·권한이 없는 로컬 개발용입니다. 문서 파싱, 규칙 실행, 생성형 LLM, 전체 변경 이력은 구현 범위에 포함하지 않습니다.
+후속 서비스 설계: [RAG 문서 의미분석·보강 아키텍처](docs/rag-document-enrichment-architecture.md) · [작업 계획안](docs/rag-document-enrichment-plan.md). 기존 거버넌스를 독립 컴포넌트로 활용하는 LangChain/LangGraph 기반 제안이며, 현재 구현 기능과 구분합니다.
+
+인증·권한이 없는 개발용입니다. 멀티모달 추출·OCR·MD 규칙 변환·Rule 버전 보관을 구현했으며, RAG 의미분석·내용 보강 및 LangGraph는 아직 설계 단계입니다.
+
+## NVIDIA 호스팅 API 기본 구성
+
+로컬 자원을 줄이기 위해 Compose 기본값은 `EMBEDDING_PROVIDER=nvidia`, `OCR_PROVIDER=nvidia`입니다. `.env.example`을 `.env`로 복사하고 `NVIDIA_API_KEY`를 설정하세요. 기존 `.env`가 있으면 키와 provider 설정을 직접 갱신해야 합니다. 키는 서버에서만 사용합니다.
+
+- OCR: `qwen/qwen3.5-122b-a10b`의 이미지 chat API.
+- 임베딩: `nvidia/llama-3.2-nv-embedqa-1b-v2`, 2048차원. query/passage를 구분하고 입력을 자동 잘라내지 않습니다.
+- PostgreSQL·LanceDB·파일 저장과 PDF 페이지 변환은 로컬에서 실행합니다. 로컬 Ollama·llama.cpp 모델 서버는 기본 실행에서 제외했습니다.
+- 프로세스당 API 요청 하나씩 실행하고 요청 간 기본 2초 간격을 둡니다. 429/502/503/504는 최대 2회 재시도합니다. 계정 전체 분산 rate limiter는 아직 없으므로 worker 수를 늘릴 때 총 호출량을 고려해야 합니다.
+- OCR 출력 잘림은 PARTIAL이며 빈 응답·비정상 종료를 성공으로 처리하지 않습니다. 토큰 기반 자동 재분할·페이지 checkpoint는 후속 구현입니다.
+
+NVIDIA API 키가 없거나 API가 실패해도 mock으로 자동 대체하지 않습니다. 외부 호출 없이 검증하려면 명시적으로 `EMBEDDING_PROVIDER=mock`, `OCR_PROVIDER=none`을 설정하세요. 모델 변경 시 새 검색 프로필이 생성되며 해당 프로필의 인덱싱이 끝나야 검색 결과가 채워집니다. 기존 벡터 테이블은 유지됩니다.
+
+로컬 모델을 쓰려면 provider를 `ollama`/`qwen`으로 설정합니다. OCR과 임베딩 모두 macOS Ollama 앱(`brew services start ollama`)을 씁니다.
+
+NVIDIA 호스팅 API의 무료 이용은 개발·평가용입니다. [공식 이용 안내](https://docs.api.nvidia.com/nim/docs/product), [Vision API](https://docs.api.nvidia.com/nim/reference/qwen-qwen3-5-122b-a10b-infer), [다국어 embedding 모델](https://docs.api.nvidia.com/nim/reference/nvidia-llama-3_2-nv-embedqa-1b-v2).
 
 ## 빠른 시작
 
-Docker Desktop 또는 Docker Engine + Compose가 필요합니다. 기본 임베딩은 다운로드가 없는 deterministic mock입니다. 최초 컨테이너 빌드에는 패키지와 이미지 다운로드가 필요합니다.
+Docker Desktop 또는 Docker Engine + Compose가 필요합니다. 위 NVIDIA API 설정을 먼저 완료하세요. 최초 컨테이너 빌드에는 앱 패키지와 이미지 다운로드가 필요하지만 로컬 모델은 다운로드하지 않습니다.
 
 ```sh
 docker compose up --build -d
@@ -47,17 +65,17 @@ pnpm dev
 
 호스트 방식의 LanceDB는 `.data/lancedb`에 저장됩니다. 컨테이너 worker와 호스트 worker를 동시에 실행하지 마세요. 호스트와 Compose의 LanceDB 경로는 별개이므로 실행 방식을 바꾸면 해당 경로를 재인덱싱합니다.
 
-| 환경 변수            | 기본값 / 의미                                                              |
-| -------------------- | -------------------------------------------------------------------------- |
-| `DATABASE_URL`       | 필수. `.env.example`에 로컬 PostgreSQL 연결 예시 제공                      |
-| `EMBEDDING_PROVIDER` | `mock` 또는 `qwen`, 기본 `mock`                                            |
-| `EMBEDDING_REVISION` | `v1`. 모델 가중치·양자화·입력 구성 변경 시 새 값 사용                      |
-| `LANCEDB_URI`        | 호스트 `.data/lancedb`, Compose `/data/lancedb`                            |
-| `QWEN_BASE_URL`      | 호스트 `http://localhost:8080/v1`; Compose에서는 host.docker.internal 사용 |
-| `QWEN_MODEL`         | `Qwen3-Embedding-4B-GGUF`                                                  |
-| `QWEN_API_KEY`       | 선택. HTTP embedding service의 인증 토큰                                   |
+| 환경 변수                 | 기본값 / 의미                                                              |
+| ------------------------- | -------------------------------------------------------------------------- |
+| `DATABASE_URL`            | 필수. `.env.example`에 로컬 PostgreSQL 연결 예시 제공                      |
+| `EMBEDDING_PROVIDER`      | `nvidia`, `mock`, `qwen`; Compose·설정 예제는 `nvidia`                     |
+| `EMBEDDING_REVISION`      | `v1`. 모델 가중치·양자화·입력 구성 변경 시 새 값 사용                      |
+| `STORAGE_LANCEDB_URI`     | 호스트 `.data/lancedb`, Compose `/data/lancedb`                            |
+| `EMBEDDING_QWEN_BASE_URL` | 호스트 `http://localhost:8080/v1`; Compose에서는 host.docker.internal 사용 |
+| `EMBEDDING_QWEN_MODEL`    | `Qwen3-Embedding-4B-GGUF`                                                  |
+| `EMBEDDING_QWEN_API_KEY`  | 선택. HTTP embedding service의 인증 토큰                                   |
 
-`.env`는 커밋하지 않습니다. Compose에서 Qwen을 사용할 때 `.env`의 `QWEN_BASE_URL`을 `http://host.docker.internal:8080/v1`로 지정하세요. 컨테이너의 localhost는 호스트가 아닙니다.
+`.env`는 커밋하지 않습니다. Compose에서 Qwen을 사용할 때 `.env`의 `EMBEDDING_QWEN_BASE_URL`을 `http://host.docker.internal:8080/v1`로 지정하세요. 컨테이너의 localhost는 호스트가 아닙니다.
 
 ## 화면
 
@@ -171,9 +189,9 @@ llama-server \
 ```env
 EMBEDDING_PROVIDER=qwen
 EMBEDDING_REVISION=qwen-q4km-v1
-QWEN_MODEL=Qwen3-Embedding-4B-GGUF
+EMBEDDING_QWEN_MODEL=Qwen3-Embedding-4B-GGUF
 # 호스트 app/worker
-QWEN_BASE_URL=http://localhost:8080/v1
+EMBEDDING_QWEN_BASE_URL=http://localhost:8080/v1
 # Compose에서는 http://host.docker.internal:8080/v1
 ```
 
@@ -281,6 +299,43 @@ Rule 스키마:
 - **MASKING**: 매칭 패턴으로 찾은 값을 치환 형식으로 바꾸고, 결과가 수정 완료 패턴과 맞을 때만 반영합니다. 개인정보 보호를 위해 코드 블록 안에도 적용하며 `scope`는 판정하지 않습니다.
 - **PROHIBITED** (`{"operator":"notContains","pattern":...}`): 변환 후 남은 위반을 `violations`로 보고만 합니다.
 - **그 밖의 유형**: 값과 Term의 연결이 필요해 자동 적용하지 않고 `skipped`에 이유와 함께 보고합니다.
+
+### 거버넌스 카탈로그 (RAG 계획 1단계)
+
+의미 검색이 아니라 code로 정확히 조회하는 기준정보입니다. 문서 유형·직급은 아직 CRUD 화면이 없고 seed로 등록합니다.
+
+| API                                                              | 동작                                                                                                                                 |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/catalog/document-types`                                | 활성 문서 유형 정의와 긍정·부정 분류 예시                                                                                            |
+| `GET /api/catalog/job-grades?scheme=KR_STANDARD&atLeast=MANAGER` | 같은 직급 체계 안에서 “과장 이상” 범위                                                                                               |
+| `POST /api/catalog/applicable-rules`                             | `{"termIds":[...],"documentType":"EXTERNAL_SUBMISSION"}` → Term 정의와 규칙 스냅샷, 규칙별 `APPLIES / NOT_APPLICABLE / UNDETERMINED` |
+| `GET /api/catalog/rules/:id/versions/:version`                   | 과거 Rule 내용 재현 (`rule_versions`, DB 트리거로 모든 변경 기록)                                                                    |
+
+문서 유형에 묶인 규칙(`rule_document_types`)은 문서 유형을 모르면(`UNKNOWN`) “적용 대상 아님”이 아니라 `UNDETERMINED`로 반환합니다. 묶이지 않은 규칙은 모든 문서에 적용됩니다.
+
+### 업로드·추출 (RAG 계획 2단계)
+
+OCR, 레이아웃 설명, 임베딩은 모두 macOS에서 직접 실행한 Ollama(Metal GPU)를 쓰고, 컨테이너는 `host.docker.internal:11434`로 호출합니다. Docker Desktop은 macOS GPU를 쓰지 못해 모델을 컨테이너로 실행하지 않습니다. 처음 한 번 `brew services start ollama` 후 `ollama pull qwen3-vl:2b-instruct-q4_K_M`, `ollama pull qwen3-embedding:0.6b`로 모델을 받습니다. 임베딩은 Ollama의 OpenAI 호환 `/v1/embeddings`(1024차원)로 호출합니다. 더 큰 모델로 바꿀 때는 `OCR_OLLAMA_MODEL`(또는 `OCR_OLLAMA_LAYOUT_MODEL`), `EMBEDDING_QWEN_MODEL`, `EMBEDDING_QWEN_DIMENSIONS`(0.6B=1024, 4B=2560)를 함께 바꾸고 재인덱싱합니다.
+
+```sh
+B=$(curl -s -XPOST localhost:3000/api/upload-batches -H 'content-type: application/json' -d '{"mode":"FOLDER"}' | jq -r .id)
+curl -XPOST "localhost:3000/api/upload-batches/$B/items?path=docs/a.md" --data-binary @a.md   # 파일마다 반복
+curl -XPOST localhost:3000/api/upload-batches/$B/finalize
+pnpm analysis-worker:once                                                                      # 또는 compose의 analysis-worker
+curl localhost:3000/api/upload-batches/$B                                                      # manifest
+curl localhost:3000/api/upload-batches/$B/items/<itemId>/content                               # ContentDocument
+curl localhost:3000/api/upload-batches/$B/items/<itemId>/links                                 # 값-엔티티 연결
+```
+
+- 파일 본문은 요청 body로 스트리밍 저장합니다(파일당 50MB). 저장 key는 서버가 만들고 상대 경로는 메타데이터로만 보관합니다. 원본은 SHA-256과 함께 불변으로 저장하며 추출 전마다 hash를 다시 확인합니다.
+- 지원 형식: MD(AST), TXT(문단), LOG(이벤트; 시간대 없는 timestamp는 추정하지 않음), PDF, 이미지(PNG/JPEG/WebP), ZIP. 확장자와 실제 내용이 모두 맞아야 인정합니다.
+- 이미지와 PDF의 모든 쪽에는 OCR과 별도로 **레이아웃 설명**을 붙입니다. 같은 비전 모델(`OCR_OLLAMA_LAYOUT_MODEL`, 비우면 `OCR_OLLAMA_MODEL`)에 JSON 스키마를 지정해 요약과 화면 영역(유형, 라벨, 0–1000 좌표, 설명)을 받고 다시 검증합니다. 결과는 `VISUAL_SUMMARY`/`VISUAL_REGION` 블록(`origin: "INFERRED"`, 보호 구간)으로 저장해 원문·OCR 텍스트와 구분하며, 용어 연결·규칙 판정의 근거로 쓰지 않습니다. 응답이 잘리거나 계약에 맞지 않으면 OCR 결과는 유지하고 content를 `PARTIAL`로 표시합니다. 텍스트 레이어가 있는 PDF 쪽도 레이아웃 설명을 위해 렌더링하므로 쪽마다 모델 호출이 1회 늘어납니다. 화면의 "레이아웃" 탭에서 이미지 위에 영역을 겹쳐 볼 수 있습니다(PDF는 목록만).
+- PDF는 쪽마다 텍스트 레이어(`pdftotext`)를 쓰고, 텍스트가 없는 쪽만 렌더링(`pdftoppm`)해 OCR합니다. 이미지는 바로 OCR합니다. OCR 블록은 `origin: "OCR"`과 쪽 번호를 가지며 위치는 쪽별 인식 텍스트 기준입니다. OCR 출력이 한도에서 잘리거나 OCR이 꺼져 건너뛴 쪽이 있으면 content를 `PARTIAL`로 표시하고 manifest 항목의 `contentQuality`로 드러냅니다. 암호화 PDF, `PDF_MAX_PAGES` 초과는 명시적으로 실패합니다.
+- ZIP: 경로 이동·절대 경로·심볼릭 링크는 거부, 암호화·중첩 압축은 미지원으로 기록, 항목 수·총 용량·압축 비율 한도를 넘으면 압축 전체를 실패로 처리합니다.
+- manifest의 `complete`는 목록 확정(`enumerationComplete`)과 모든 항목 처리 완료가 둘 다 참일 때만 참입니다. 실패·미지원 항목도 사유와 함께 manifest에 남습니다.
+- **처리 중지**: 배치 화면의 "처리 중지"(`POST /api/upload-batches/:id/cancel`)는 대기 작업을 취소하고, 실행 중인 작업은 worker가 10초 안에 감지해 진행 중인 모델 호출까지 중단합니다. 중지된 작업의 결과는 반영하지 않으며, 중지·실패 항목은 "다시 처리"(`POST /api/upload-batches/:id/retry`)로 재개합니다.
+- 작업은 `ingestion_jobs`에서 lease로 가져가므로 worker가 중단되어도 lease 만료 후 다른 worker가 이어받습니다. `pnpm analysis-worker --cleanup`은 오래된 미완료 업로드를 정리합니다.
+- 값-엔티티 연결은 표 헤더와 `라벨: 값`이 등록된 용어·표현과 정확히 일치할 때만 만들고, 여러 Term에 걸리는 라벨은 `unresolved`로 보고합니다. 코드 블록은 연결하지 않습니다.
 
 ## 검증
 

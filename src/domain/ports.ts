@@ -1,4 +1,10 @@
 import type {
+  DocumentTypeDef,
+  JobGradeDef,
+  RuleSnapshot,
+  TermDef,
+} from "./catalog";
+import type {
   Candidate,
   Collection,
   Entity,
@@ -65,4 +71,18 @@ export interface ActiveGovernance {
 // Reads only the relational source; document transformation never needs the vector index.
 export interface ActiveGovernancePort {
   loadActive(): Promise<ActiveGovernance>;
+}
+
+// Exact, code-based governance lookups. Required rules are never left to vector topK.
+export interface GovernanceCatalog {
+  listDocumentTypes(): Promise<DocumentTypeDef[]>;
+  listJobGrades(gradeSchemeId?: string): Promise<JobGradeDef[]>;
+  getTerms(ids: string[]): Promise<TermDef[]>;
+  activeRulesForTerms(termIds: string[]): Promise<RuleSnapshot[]>;
+  getRuleVersion(
+    ruleId: string,
+    version: number,
+  ): Promise<Record<string, unknown> | null>;
+  // Active term names and expressions, for exact label matching.
+  activeVocabulary(): Promise<{ text: string; termId: string }[]>;
 }
